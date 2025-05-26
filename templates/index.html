@@ -63,8 +63,10 @@
             margin-top: 20px;
             text-align: center;
         }
-        
-
+        /* アクティブなフィルターボタンのスタイル */
+        .filter-button.active {
+            @apply bg-blue-700; /* TailwindCSSのbg-blue-700を適用 */
+        }
     </style>
 </head>
 <body class="bg-gray-100 p-4">
@@ -75,6 +77,13 @@
             <input type="text" id="search-box" placeholder="店名で検索..." class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2" />
         </div>
 
+        <div class="flex justify-center space-x-2 mb-4">
+            <button id="filter-all" class="filter-button bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded active">全て表示</button>
+            <button id="filter-full" class="filter-button bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded">「対応」のみ</button>
+            <button id="filter-partial" class="filter-button bg-yellow-500 hover:bg-yellow-600 text-white font-semibold py-2 px-4 rounded">「一部」のみ</button>
+            <button id="filter-none" class="filter-button bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-4 rounded">「非対応」のみ</button>
+        </div>
+
         <div id="map"></div>
         <div class="admin-button">
             <a href="/admin/add" class="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded">店舗を追加</a>
@@ -82,8 +91,8 @@
     </div>
 
     <script>
-// 地図の初期化
-var map = L.map('map').setView([36.1073, 140.1041], 13); // 地図の中心を筑波大学に変更
+        // 地図の初期化
+        var map = L.map('map').setView([36.1073, 140.1041], 13); // 地図の中心を筑波大学に変更
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         }).addTo(map);
@@ -113,6 +122,7 @@ var map = L.map('map').setView([36.1073, 140.1041], 13); // 地図の中心を�
         }
 
         let allMarkers = []; // 全てのマーカーを保持する配列
+        let currentFilter = 'all'; // 現在適用されているフィルター ('all', '対応', '一部', '非対応')
 
         // 店舗データを取得し、地図に表示する関数
         function displayShops() {
@@ -138,9 +148,14 @@ var map = L.map('map').setView([36.1073, 140.1041], 13); // 地図の中心を�
                                 </div>`
                             );
                         marker.shopName = shop.name.toLowerCase(); // マーカーに店舗名を小文字で保持
+                        marker.cashlessStatus = shop.cashless; // マーカーにキャッシュレス状況を保持
                         allMarkers.push(marker); // 作成したマーカーを配列に追加
-                        marker.addTo(map); // 初期表示はすべてのマーカーを表示
+                        // displayShopsの初期表示では、現在のフィルターを適用して表示
+                        if (currentFilter === 'all' || marker.cashlessStatus === currentFilter) {
+                            marker.addTo(map);
+                        }
                     });
+                    applyFilter(currentFilter); // 検索ボックスとフィルターボタンの状態を同期
                 })
                 .catch(error => {
                     console.error('Error fetching shops:', error);
@@ -151,21 +166,52 @@ var map = L.map('map').setView([36.1073, 140.1041], 13); // 地図の中心を�
         // ページ読み込み時に店舗データを表示
         displayShops();
 
-        // 検索機能
-        document.getElementById('search-box').addEventListener('input', function() {
-            var query = this.value.toLowerCase();
+        // フィルター適用関数
+        function applyFilter(filterStatus) {
+            currentFilter = filterStatus; // 現在のフィルターを更新
+
+            // 検索ボックスが空の場合のみフィルターを適用
+            const searchQuery = document.getElementById('search-box').value.toLowerCase();
+
             allMarkers.forEach(marker => {
-                if (marker.shopName.includes(query)) {
-                    if (!map.hasLayer(marker)) { // マップに表示されていなければ追加
+                const matchesSearch = marker.shopName.includes(searchQuery);
+                const matchesFilter = (filterStatus === 'all' || marker.cashlessStatus === filterStatus);
+
+                if (matchesSearch && matchesFilter) {
+                    if (!map.hasLayer(marker)) {
                         marker.addTo(map);
                     }
                 } else {
-                    if (map.hasLayer(marker)) { // マップに表示されていれば削除
+                    if (map.hasLayer(marker)) {
                         map.removeLayer(marker);
                     }
                 }
             });
+
+            // アクティブなボタンのスタイルを更新
+            document.querySelectorAll('.filter-button').forEach(button => {
+                button.classList.remove('active');
+            });
+            const activeButtonId = `filter-${filterStatus.toLowerCase().replace('対応', 'full').replace('一部', 'partial').replace('非対応', 'none')}`;
+            const activeButton = document.getElementById(activeButtonId);
+            if (activeButton) {
+                activeButton.classList.add('active');
+            }
+        }
+
+
+        // 検索機能
+        document.getElementById('search-box').addEventListener('input', function() {
+            // 検索クエリが変更されたら、現在のフィルターを保持しつつ再表示
+            applyFilter(currentFilter);
         });
+
+        // フィルターボタンのイベントリスナー
+        document.getElementById('filter-all').addEventListener('click', () => applyFilter('all'));
+        document.getElementById('filter-full').addEventListener('click', () => applyFilter('対応'));
+        document.getElementById('filter-partial').addEventListener('click', () => applyFilter('一部'));
+        document.getElementById('filter-none').addEventListener('click', () => applyFilter('非対応'));
+
     </script>
 </body>
 </html>
