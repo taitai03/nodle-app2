@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>キャッシュレス対応店舗マップ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* Interフォントを適用 */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Leafletのデフォルトスタイルを調整（必要に応じて） */
+        #map {
+            height: 500px; /* 地図の高さを指定 */
+            border-radius: 8px; /* 角を丸くする */
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); /* 影をつける */
+        }
+        .marker-icon {
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            font-size: 16px;
+            box-shadow: 1px 1px 2px rgba(0, 0, 0, 0.2);
+        }
+        .marker-red { background-color: #ef4444; } /* 赤：対応していない */
+        .marker-green { background-color: #10b981; } /* 緑：対応している */
+        .marker-yellow { background-color: #f59e0b; } /* 黄：一部対応 */
+
+        .shop-name {
+            font-size: 1.2em;
+            font-weight: 600;
+            color: #1e293b; /* より濃いグレー */
+        }
+        .shop-address {
+            font-size: 0.9em;
+            color: #4b5563; /* 少し薄いグレー */
+            margin-bottom: 4px;
+        }
+        .cashless-info {
+            font-size: 1em;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+
+        .popup-content {
+            padding: 12px;
+            border-radius: 6px;
+            background-color: white;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+            width: 250px; /* ポップアップの幅 */
+        }
+        .admin-button {
+            margin-top: 20px;
+            text-align: center;
+        }
+        
+
+    </style>
+</head>
+<body class="bg-gray-100 p-4">
+    <div class="container mx-auto bg-white rounded-lg shadow-md p-6">
+        <h1 class="text-2xl font-semibold text-blue-600 mb-4 text-center">キャッシュレス対応店舗マップ</h1>
+
+        <div class="mb-4">
+            <input type="text" id="search-box" placeholder="店名で検索..." class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2" />
+        </div>
+
+        <div id="map"></div>
+        <div class="admin-button">
+            <a href="/admin/add" class="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded">店舗を追加</a>
+        </div>
+    </div>
+
+    <script>
+// 地図の初期化
+var map = L.map('map').setView([36.1073, 140.1041], 13); // 地図の中心を筑波大学に変更
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+
+        // アイコンの色分け
+        function getMarkerColor(cashless) {
+            if (cashless === '対応') {
+                return 'green';
+            } else if (cashless === '一部') {
+                return 'yellow';
+            } else {
+                return 'red';
+            }
+        }
+
+        // マーカーのスタイル設定
+        function getMarkerStyle(cashless) {
+            const color = getMarkerColor(cashless);
+            return {
+                icon: L.divIcon({
+                    className: 'marker-icon marker-' + color,
+                    html: cashless === '対応' ? '✓' : cashless === '一部' ? '?' : '✗', // アイコン表示
+                    iconSize: [30, 30],
+                    iconAnchor: [15, 15]
+                })
+            };
+        }
+
+        let allMarkers = []; // 全てのマーカーを保持する配列
+
+        // 店舗データを取得し、地図に表示する関数
+        function displayShops() {
+            fetch('/api/shops') // FlaskのAPIエンドポイントからデータを取得
+                .then(response => response.json())
+                .then(data => {
+                    // 既存のマーカーを削除し、allMarkers 配列をクリア
+                    allMarkers.forEach(marker => map.removeLayer(marker));
+                    allMarkers = [];
+
+                    // 取得した店舗データを地図に表示
+                    data.forEach(shop => {
+                        var markerStyle = getMarkerStyle(shop.cashless);
+                        var marker = L.marker([shop.lat, shop.lng], markerStyle)
+                            .bindPopup(
+                                `<div class="popup-content">
+                                    <h3 class="shop-name">${shop.name}</h3>
+                                    <p class="shop-address">${shop.address}</p>
+                                    <p class="cashless-info">キャッシュレス決済: <span class="font-semibold">${shop.cashless}</span></p>
+                                    <form action="/admin/delete/${shop.id}" method="POST">
+                                        <input type="submit" value="削除" class="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded mt-2 cursor-pointer inline-block">
+                                    </form>
+                                </div>`
+                            );
+                        marker.shopName = shop.name.toLowerCase(); // マーカーに店舗名を小文字で保持
+                        allMarkers.push(marker); // 作成したマーカーを配列に追加
+                        marker.addTo(map); // 初期表示はすべてのマーカーを表示
+                    });
+                })
+                .catch(error => {
+                    console.error('Error fetching shops:', error);
+                    alert('店舗データの取得に失敗しました。');
+                });
+        }
+
+        // ページ読み込み時に店舗データを表示
+        displayShops();
+
+        // 検索機能
+        document.getElementById('search-box').addEventListener('input', function() {
+            var query = this.value.toLowerCase();
+            allMarkers.forEach(marker => {
+                if (marker.shopName.includes(query)) {
+                    if (!map.hasLayer(marker)) { // マップに表示されていなければ追加
+                        marker.addTo(map);
+                    }
+                } else {
+                    if (map.hasLayer(marker)) { // マップに表示されていれば削除
+                        map.removeLayer(marker);
+                    }
+                }
+            });
+        });
+    </script>
+</body>
+</html>
