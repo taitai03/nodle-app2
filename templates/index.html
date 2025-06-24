@@ -51,6 +51,34 @@
             font-weight: 500;
             margin-bottom: 8px;
         }
+        /* 営業時間と定休日のスタイル */
+        .hours-info, .holidays-info {
+            font-size: 0.9em;
+            color: #4b5563;
+            margin-bottom: 4px;
+        }
+        /* 営業状況表示のスタイル */
+        .open-status {
+            font-size: 1em;
+            font-weight: 600;
+            margin-top: 8px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            text-align: center;
+        }
+        .open-status.open {
+            background-color: #d1fae5; /* 緑系の背景 */
+            color: #065f46; /* 緑系の文字 */
+        }
+        .open-status.closed {
+            background-color: #fee2e2; /* 赤系の背景 */
+            color: #991b1b; /* 赤系の文字 */
+        }
+        .open-status.unknown {
+            background-color: #fffbeb; /* 黄系の背景 */
+            color: #92400e; /* 黄系の文字 */
+        }
+
 
         .popup-content {
             padding: 12px;
@@ -69,7 +97,12 @@
         }
     </style>
 </head>
-<body class="bg-gray-100 p-4">
+<body class="bg-gray-100 p-4 relative">
+    {# 現在日時を画面左上に表示する部分 #}
+    <div class="absolute top-6 left-24 text-sm text-gray-600 z-10">
+        現在日時: {{ current_datetime }}
+    </div>
+
     <div class="container mx-auto bg-white rounded-lg shadow-md p-6">
         <h1 class="text-2xl font-semibold text-blue-600 mb-4 text-center">キャッシュレス対応店舗マップ</h1>
 
@@ -82,6 +115,8 @@
             <button id="filter-full" class="filter-button bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded">「対応」のみ</button>
             <button id="filter-partial" class="filter-button bg-yellow-500 hover:bg-yellow-600 text-white font-semibold py-2 px-4 rounded">「一部」のみ</button>
             <button id="filter-none" class="filter-button bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-4 rounded">「非対応」のみ</button>
+            {# ★追加: 営業中のみ表示ボタン #}
+            <button id="filter-open" class="filter-button bg-purple-500 hover:bg-purple-600 text-white font-semibold py-2 px-4 rounded">営業中のみ</button>
         </div>
 
         <div id="map"></div>
@@ -122,12 +157,18 @@
         }
 
         let allMarkers = []; // 全てのマーカーを保持する配列
-        let currentFilter = 'all'; // 現在適用されているフィルター ('all', '対応', '一部', '非対応')
+        let currentFilter = 'all'; // 現在適用されているフィルター ('all', '対応', '一部', '非対応', 'open')
 
         // 店舗データを取得し、地図に表示する関数
         function displayShops() {
             fetch('/api/shops') // FlaskのAPIエンドポイントからデータを取得
-                .then(response => response.json())
+                .then(response => {
+                    // レスポンスがOKでない場合はエラーをスロー
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
                 .then(data => {
                     // 既存のマーカーを削除し、allMarkers 配列をクリア
                     allMarkers.forEach(marker => map.removeLayer(marker));
@@ -142,6 +183,12 @@
                                     <h3 class="shop-name">${shop.name}</h3>
                                     <p class="shop-address">${shop.address}</p>
                                     <p class="cashless-info">キャッシュレス決済: <span class="font-semibold">${shop.cashless}</span></p>
+                                    <p class="hours-info">営業時間: <span class="font-semibold">${shop.opening_hours || '情報なし'}</span></p>
+                                    <p class="holidays-info">定休日: <span class="font-semibold">${shop.regular_holidays || '情報なし'}</span></p>
+                                    {# 営業状況を表示 #}
+                                    <p class="open-status ${shop.is_open ? 'open' : (shop.open_status_text === '定休日' || shop.open_status_text === '営業時間外' ? 'closed' : 'unknown')}">
+                                        ${shop.open_status_text}
+                                    </p>
                                     <form action="/admin/delete/${shop.id}" method="POST">
                                         <input type="submit" value="削除" class="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded mt-2 cursor-pointer inline-block">
                                     </form>
@@ -149,6 +196,7 @@
                             );
                         marker.shopName = shop.name.toLowerCase(); // マーカーに店舗名を小文字で保持
                         marker.cashlessStatus = shop.cashless; // マーカーにキャッシュレス状況を保持
+                        marker.isOpen = shop.is_open; // ★追加: 営業中ステータスをマーカーに保持
                         allMarkers.push(marker); // 作成したマーカーを配列に追加
                         // displayShopsの初期表示では、現在のフィルターを適用して表示
                         if (currentFilter === 'all' || marker.cashlessStatus === currentFilter) {
@@ -159,7 +207,7 @@
                 })
                 .catch(error => {
                     console.error('Error fetching shops:', error);
-                    alert('店舗データの取得に失敗しました。');
+                    alert('店舗データの取得に失敗しました。詳細: ' + error.message); // エラーメッセージをより詳細に表示
                 });
         }
 
@@ -175,8 +223,17 @@
 
             allMarkers.forEach(marker => {
                 const matchesSearch = marker.shopName.includes(searchQuery);
-                const matchesFilter = (filterStatus === 'all' || marker.cashlessStatus === filterStatus);
+                let matchesFilter = false;
 
+                // ★修正: 新しいフィルターオプション 'open' を追加
+                if (filterStatus === 'all') {
+                    matchesFilter = true;
+                } else if (filterStatus === 'open') {
+                    matchesFilter = marker.isOpen; // 営業中のマーカーのみ表示
+                } else {
+                    matchesFilter = (marker.cashlessStatus === filterStatus);
+                }
+                
                 if (matchesSearch && matchesFilter) {
                     if (!map.hasLayer(marker)) {
                         marker.addTo(map);
@@ -192,7 +249,13 @@
             document.querySelectorAll('.filter-button').forEach(button => {
                 button.classList.remove('active');
             });
-            const activeButtonId = `filter-${filterStatus.toLowerCase().replace('対応', 'full').replace('一部', 'partial').replace('非対応', 'none')}`;
+            // ★修正: 新しいフィルターオプション 'open' に対応
+            let activeButtonId;
+            if (filterStatus === 'open') {
+                activeButtonId = 'filter-open';
+            } else {
+                activeButtonId = `filter-${filterStatus.toLowerCase().replace('対応', 'full').replace('一部', 'partial').replace('非対応', 'none')}`;
+            }
             const activeButton = document.getElementById(activeButtonId);
             if (activeButton) {
                 activeButton.classList.add('active');
@@ -211,6 +274,8 @@
         document.getElementById('filter-full').addEventListener('click', () => applyFilter('対応'));
         document.getElementById('filter-partial').addEventListener('click', () => applyFilter('一部'));
         document.getElementById('filter-none').addEventListener('click', () => applyFilter('非対応'));
+        // ★追加: 営業中のみ表示ボタンのイベントリスナー
+        document.getElementById('filter-open').addEventListener('click', () => applyFilter('open'));
 
     </script>
 </body>
